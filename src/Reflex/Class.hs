@@ -236,13 +236,24 @@ class ( MonadHold t (PushM t)
   -- This is only needed for performance critical code via `mergeIncremental` to make small
   -- changes to large values.
   data Incremental t :: * -> *
-  -- | A monad for doing complex push-based calculations efficiently
+  -- | A monad for doing complex push-based calculations efficiently.
+  --
+  -- This monad is an instance of 'MonadHold', so it can make behaviors that "remember" what events have occured.
+  -- Obviously, keeping around every single event that has happened in the system is rather expensive, so we instead make calculations push-based.
+  -- This enables efficiency at the cost of laziness.
+  -- If a behavior depends on the values of an event, it will always update whenver that event fires.
   type PushM t :: * -> *
-  -- | A monad for doing complex pull-based calculations efficiently
+  -- | A monad for doing complex pull-based calculations efficiently.
+  --
+  -- This monad is an instance of 'MonadSample', which allows you to build behaviors out of other behaviors.
+  -- Unlike 'PushM', it behaves lazily, which is good for performance.
+  -- It cannot, however, do anything with events, making 'PushM' strictly more powerful.
   type PullM t :: * -> *
   -- | An 'Event' with no occurrences
   never :: Event t a
   -- | Create a 'Behavior' that always has the given value
+  -- 
+  -- This is equivalent to 'pure'. 
   constant :: a -> Behavior t a --TODO: Refactor to use 'pure' from Applicative instead; however, we need to make sure that encouraging Applicative-style use of 'Behavior's doesn't have a negative performance impact
   -- | Create an 'Event' from another 'Event'; the provided function can sample
   -- 'Behavior's and hold 'Event's, and use the results to produce a occurring
@@ -272,10 +283,12 @@ class ( MonadHold t (PushM t)
   updated :: Dynamic t a -> Event t a
   -- | Create a new 'Dynamic'.  The given 'PullM' must always return the most
   -- recent firing of the given 'Event', if any.
+  -- This function exists for performance reasons.
   unsafeBuildDynamic :: PullM t a -> Event t a -> Dynamic t a
   -- | Create a new 'Incremental'.  The given "PullM"'s value must always change
   -- in the same way that the accumulated application of patches would change
   -- that value.
+  -- This function exists for performance reasons only.
   unsafeBuildIncremental :: Patch p => PullM t (PatchTarget p) -> Event t p -> Incremental t p
   -- | Create a merge whose parents can change over time
   mergeIncremental :: GCompare k => Incremental t (PatchDMap k (Event t)) -> Event t (DMap k Identity)
@@ -325,7 +338,8 @@ coerceDynamic = coerceWith $ dynamicCoercion Coercion
 unsafeDynamic :: Reflex t => Behavior t a -> Event t a -> Dynamic t a
 unsafeDynamic = unsafeBuildDynamic . sample
 
--- | Construct a 'Dynamic' value that never changes
+-- | Construct a 'Dynamic' value that never changes.
+-- Equivalent to 'pure'.
 constDyn :: Reflex t => a -> Dynamic t a
 constDyn = pure
 
@@ -341,6 +355,8 @@ class (Applicative m, Monad m) => MonadSample t m | m -> t where
 -- | 'MonadHold' designates monads that can create new 'Behavior's based on
 -- 'Event's; usually this will be 'PushM' or a monad based on it.  'MonadHold'
 -- is required to create any stateful computations with Reflex.
+-- Since you should always be able to sample other behaviors if you can hold events, this
+-- class requires that you implement 'MonadSample' first. 
 class MonadSample t m => MonadHold t m where
   -- | Create a new 'Behavior' whose value will initially be equal to the given
   -- value and will be updated whenever the given 'Event' occurs.  The update
